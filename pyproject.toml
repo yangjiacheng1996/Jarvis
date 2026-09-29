@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Jarvis Core — workspace initialization CLI"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph-checkpoint-sqlite>=0.1,<1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+jarvis = "jarvis.cli_client.jarvis_cli:cli_main"
+
+[tool.setuptools.packages.find]
+where = ["jarvis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
