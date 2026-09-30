@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Jarvis Core — workspace initialization CLI"
 requires-python = ">=3.11"
 dependencies = [
-    "langgraph-checkpoint-sqlite>=0.1,<1.0",
+    "langgraph-checkpoint-sqlite>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -20,7 +20,7 @@ test = [
 jarvis = "jarvis.cli_client.jarvis_cli:cli_main"
 
 [tool.setuptools.packages.find]
-where = ["jarvis"]
+where = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

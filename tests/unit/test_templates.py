@@ -69,6 +69,7 @@ def test_mcp_readme_has_three_transport_snippets(transport: str) -> None:
 
 
 def test_skills_example_md_frontmatter() -> None:
+    """Agent Skills spec Level-1: only `name` + `description` (no `when_to_use`)."""
     text = templates.SKILLS_EXAMPLE_MD
     assert text.startswith("---")
     parts = text.split("---", 2)
@@ -76,7 +77,14 @@ def test_skills_example_md_frontmatter() -> None:
     data = yaml.safe_load(parts[1])
     assert "name" in data
     assert "description" in data
-    assert "when_to_use" in data
+    # Agent Skills Level-1 spec: `when_to_use` is NOT a valid field.
+    # "When to use" semantics MUST be folded into `description`.
+    assert "when_to_use" not in data, (
+        "Agent Skills spec: frontmatter Level-1 must contain only `name` and `description`; "
+        "fold usage hints into `description` instead of adding `when_to_use`."
+    )
+    # Exactly two top-level keys (or a small superset if you really must add metadata).
+    assert set(data.keys()) == {"name", "description"}
 
 
 def test_gitignore_contains_required_patterns() -> None:
@@ -125,3 +133,68 @@ def test_memory_readme_checkpoint_and_store() -> None:
     assert "store" in r
     assert "checkpoint.sqlite3" in r
     assert "store.sqlite3" in r
+
+
+# --- 2026-09-30 amendment content assertions ---------------------------------
+
+
+def test_memory_readme_no_pre_amendment_wording(tmp_path_unit: str = None) -> None:
+    """2026-09-30 (FR-021): MEMORY_README no longer claims store.sqlite3 is 'Core 阶段不生成'.
+
+    The pre-amendment text "**当前 Core 阶段此文件不存在**，`jarvis init` 也不会创建它"
+    was REMOVED per FR-021 because init now creates store.sqlite3 (FR-019).
+    """
+    r = templates.MEMORY_README
+    assert "Core 阶段不生成" not in r
+    assert "也不会创建" not in r or "init 阶段" in r  # rewording allowed
+    # Positive assertion: the new wording (init 阶段幂等创建 / byte-level header check)
+    assert "init 阶段" in r or "jarvis init" in r
+    assert "存活检查" in r or "字节级" in r
+
+
+def test_memory_readme_user_data_semantics() -> None:
+    """2026-09-30 (Q6): MEMORY_README documents store.sqlite3 as user-data.
+
+    `--force` never overwrites; corrupt → exit 7.
+    """
+    r = templates.MEMORY_README
+    assert "user-data" in r or "用户数据" in r
+    # --force never overwrites
+    assert "--force" in r and ("永不" in r or "永远不" in r or "never" in r.lower() or "不会" in r)
+
+
+def test_top_level_readme_scheduler_entry() -> None:
+    """2026-09-30 (FR-021): TOP_LEVEL_README mentions scheduler/ as reserved directory."""
+    r = templates.TOP_LEVEL_README
+    assert "scheduler/" in r
+    # Reserved-for-Scheduler wording
+    assert "Scheduler" in r or "scheduler" in r
+
+
+def test_top_level_readme_store_sqlite3_wording_updated() -> None:
+    """2026-09-30 (FR-021): store.sqlite3 entry no longer says 'Core 阶段不生成'."""
+    r = templates.TOP_LEVEL_README
+    # Negative: pre-amendment phrasing is gone
+    assert "Core 阶段不生成" not in r
+    # Positive: new wording mentions init 创建 + Scheduler 写入
+    assert "init" in r.lower()
+    assert "Scheduler" in r or "scheduler" in r
+
+
+def test_scheduler_readme_constant_exists_and_safe() -> None:
+    """2026-09-30 (FR-020/FR-021): SCHEDULER_README constant exists with safe content."""
+    assert hasattr(templates, "SCHEDULER_README"), "SCHEDULER_README constant must exist"
+    r = templates.SCHEDULER_README
+    assert r.strip(), "SCHEDULER_README must be non-empty"
+    # FR-021: no engine-side terminology
+    for forbidden in ("LangGraph", "LangChain", "SqliteSaver", "SqliteStore", "MCPAdapter"):
+        assert forbidden not in r, f"SCHEDULER_README mentions forbidden term: {forbidden}"
+    # It explains the reservation
+    assert "Scheduler" in r or "scheduler" in r
+
+
+def test_top_level_readme_no_engine_names_extended() -> None:
+    """2026-09-30: TOP_LEVEL_README must not contain SqliteStore either (new term in MEMORY_README)."""
+    r = templates.TOP_LEVEL_README
+    for forbidden in ("LangGraph", "LangChain", "SqliteSaver", "SqliteStore", "MCPAdapter"):
+        assert forbidden not in r, f"TOP_LEVEL_README mentions forbidden term: {forbidden}"

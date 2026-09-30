@@ -149,14 +149,19 @@ def _create_item(item: ItemSpec, target: Path, *, force: bool) -> ItemStatus:
     Returns ItemStatus with state='created' on success, 'skipped' for items
     with no create_fn, or 'error' on failure. SqliteSetupError is captured
     into detail so the orchestrator can mark sqlite_setup_failed=True.
+
+    Revised 2026-09-30: no item currently uses the create_fn-None branch
+    (memory/store.sqlite3 now has a create_fn per FR-019). The branch is
+    retained as a safety net for future items that opt to skip creation.
     """
     if item.create_fn is None:
-        # store.sqlite3 — always skipped
+        # Safety net — no current item has create_fn=None post-amendment.
+        # Retained for forward compatibility (e.g., a future "opt-out" item).
         return ItemStatus(
             path=str(target),
             name=item.relpath,
             state="skipped",
-            detail="Scheduler 阶段创建",
+            detail="no create_fn registered",
         )
 
     # Determine which kwargs create_fn accepts

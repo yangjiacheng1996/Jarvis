@@ -1,8 +1,10 @@
 """Integration test for first-time init (US1 / T015 + T028).
 
 Verifies:
-- Spec FR-001 (16-item registry + .gitignore side-effect)
+- Spec FR-001 (18-item registry + .gitignore side-effect; revised 2026-09-30)
 - Spec FR-008 / FR-009 / FR-010 / FR-011 / FR-012 / FR-013
+- Spec FR-018..FR-021 (2026-09-30 amendment: store.sqlite3 created by init; scheduler/ reserved)
+- Spec NFR-005..NFR-007 (2026-09-30: no sqlite3.connect in check; no schema at init; round-trip create)
 - Spec Verification §1
 
 Drives the public library API: jarvis_core.init_workspace(...).
@@ -37,49 +39,46 @@ REQUIRED_ITEMS = (
     "memory/checkpoint.sqlite3",
     "memory/store.sqlite3",
     "memory/README.md",
+    "scheduler",
+    "scheduler/README.md",
     "README.md",
 )
 
 
-def test_first_time_init_creates_all_16_items(tmp_path: Path) -> None:
-    """T015: contract test — first-time init produces the full registry."""
+def test_first_time_init_creates_all_18_items(tmp_path: Path) -> None:
+    """T015 (revised 2026-09-30): contract test — first-time init produces the full 18-item registry."""
 
     result = init_workspace(path=tmp_path, name="TestAgent", force=False)
 
-    # Library API contract: len(items)==16, exit_code==0, counts per spec FR-001.
-    assert len(result.items) == 16
+    # Library API contract (revised): len(items)==18, exit_code==0, counts per spec FR-001.
+    assert len(result.items) == 18
     assert result.exit_code == 0
     assert result.counts == {
-        "created": 15,
+        "created": 18,
         "ok": 0,
         "warning": 0,
         "error": 0,
         "overwritten": 0,
-        "skipped": 1,
+        "skipped": 0,
     }
     assert result.name == "TestAgent"
 
-    # All items in {created, skipped} on first run.
+    # All items in {created} on first run (no `skipped` rows post-amendment).
     states = {it.state for it in result.items}
-    assert states.issubset({"created", "skipped"})
+    assert states.issubset({"created"})
 
-    # 15 "created" + 1 "skipped" (store.sqlite3).
     created_count = sum(1 for it in result.items if it.state == "created")
     skipped_count = sum(1 for it in result.items if it.state == "skipped")
-    assert created_count == 15
-    assert skipped_count == 1
+    assert created_count == 18
+    assert skipped_count == 0
 
-    # 15 items must exist on disk; store.sqlite3 is never created (skipped).
-    NOT_ON_DISK = ("memory/store.sqlite3",)
+    # All 18 items must exist on disk (incl. store.sqlite3 and scheduler/*)
     for rel in REQUIRED_ITEMS:
-        if rel in NOT_ON_DISK:
-            assert not (tmp_path / rel).exists(), f"store.sqlite3 must NOT exist"
-            continue
         assert (tmp_path / rel).exists(), f"missing: {rel}"
 
 
 def test_first_time_init_content_assertions(tmp_path: Path) -> None:
-    """T028: full content sanity for first-time init (Verification §1)."""
+    """T028 (revised 2026-09-30): full content sanity for first-time init (Verification §1)."""
 
     init_workspace(path=tmp_path, name="TestAgent", force=False)
 
@@ -105,8 +104,27 @@ def test_first_time_init_content_assertions(tmp_path: Path) -> None:
     finally:
         conn.close()
 
-    # store.sqlite3 does NOT exist
-    assert not (tmp_path / "memory" / "store.sqlite3").exists()
+    # FR-019 (revised 2026-09-30): store.sqlite3 EXISTS and is a valid empty SQLite
+    assert (tmp_path / "memory" / "store.sqlite3").exists()
+    header = (tmp_path / "memory" / "store.sqlite3").read_bytes()[:16]
+    assert header == b"SQLite format 3\x00"
+    # NFR-006: 0 tables (no schema at init)
+    conn = sqlite3.connect(str(tmp_path / "memory" / "store.sqlite3"))
+    try:
+        n = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
+        assert n == 0, f"expected 0 tables in store.sqlite3, got {n}"
+    finally:
+        conn.close()
+
+    # FR-020 (NEW 2026-09-30): scheduler/ + scheduler/README.md exist
+    assert (tmp_path / "scheduler").is_dir()
+    readme = (tmp_path / "scheduler" / "README.md")
+    assert readme.is_file()
+    text = readme.read_text(encoding="utf-8")
+    assert text.strip(), "Scheduler README should be non-empty"
+    # FR-021: README does not mention engine-side terminology
+    for forbidden in ("LangGraph", "LangChain", "SqliteSaver", "SqliteStore", "MCPAdapter"):
+        assert forbidden not in text, f"scheduler/README.md mentions {forbidden}"
 
     # .gitignore side-effect file
     gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")

@@ -104,7 +104,8 @@ def test_sqlite_setup_raises_oserror_returns_four(tmp_path: Path, monkeypatch: p
 
     result = init_workspace(path=tmp_path, name="TestAgent", force=False)
     assert result.exit_code == 4
-    assert len(result.items) == 16  # FR-001 invariant on exit_code=4 path
+    # FR-001 invariant on exit_code=4 path (revised 2026-09-30: 18 items, was 16)
+    assert len(result.items) == 18
     checkpoint_item = next(
         it for it in result.items if it.name == "memory/checkpoint.sqlite3"
     )
@@ -144,8 +145,8 @@ def test_sqlite_setup_failure_short_circuits_other_errors(tmp_path: Path, monkey
     assert provider_item.state == "error"
     # SqliteSaver.setup() was called exactly once — verified by the fact
     # that the orchestrator did not raise out of the loop and continued
-    # processing the remaining 15 items.
-    assert len(result.items) == 16
+    # processing the remaining 17 items (revised 2026-09-30: 18 items total, was 16).
+    assert len(result.items) == 18
 
 
 def test_compute_exit_code_handles_sqlite_setup_failure_directly() -> None:

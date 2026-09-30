@@ -72,8 +72,13 @@ def test_gitignore_contains_required_patterns(tmp_path: Path) -> None:
 
 
 def test_gitignore_is_not_in_items_registry(tmp_path: Path) -> None:
-    """Spec FR-001: .gitignore is a side-effect file; NOT counted in items."""
+    """Spec FR-001: .gitignore is a side-effect file; NOT counted in items.
+
+    Revised 2026-09-30: registry is 18 items (was 16); the assertion is updated
+    accordingly. `scheduler/` + `scheduler/README.md` are NEW items in the registry;
+    `.gitignore` remains a side-effect file (NOT in items).
+    """
     result = init_workspace(path=tmp_path, name="TestAgent", force=False)
     item_names = {it.name for it in result.items}
     assert ".gitignore" not in item_names
-    assert len(result.items) == 16
+    assert len(result.items) == 18

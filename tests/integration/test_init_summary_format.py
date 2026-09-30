@@ -1,4 +1,4 @@
-"""CLI summary format test (T047 / Verification §10).
+"""CLI summary format test (T047 / Verification §14, revised 2026-09-30).
 
 Per NFR-004:
 - column-aligned table
@@ -6,6 +6,9 @@ Per NFR-004:
 - summary line: '<n> created · <n> ok · <n> warning · ... · <n> skipped'
 - render_summary does NOT include the follow-up line (CLI adds it)
 - CLI subprocess output DOES include the follow-up line on exit_code 0
+
+Revised 2026-09-30: registry is 18 items (was 16); no `skipped` rows anymore
+(store.sqlite3 is now `created` / `ok`, not `skipped`).
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ def test_render_summary_table_format(tmp_path: Path) -> None:
         or line.startswith("  →")
         or line.startswith("  ⊘")
     ]
-    assert len(item_rows) == 16
+    assert len(item_rows) == 18, f"expected 18 item rows, got {len(item_rows)}"
 
     # The summary line at the bottom
     summary_line = lines[-1]

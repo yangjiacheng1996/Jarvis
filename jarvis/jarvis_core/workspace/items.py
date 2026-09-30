@@ -57,12 +57,17 @@ class ItemSpec:
 # ---------------------------------------------------------------------------
 
 
-def check_checkpoint_sqlite_header(path: Path) -> CheckResult:
-    """NFR-001a byte-level header check (T023a). Reads first 16 bytes only.
+def check_sqlite_header(path: Path) -> CheckResult:
+    """Byte-level header check for any SQLite file (NFR-001a / NFR-005).
 
-    Returns 'ok' iff bytes == b"SQLite format 3\\x00", else 'error'.
-    NEVER calls sqlite3.connect() (NFR-001a). NEVER touches the file beyond
+    Used by both `_checkpoint_sqlite_check` and `_store_sqlite_check` (revised 2026-09-30).
+    Reads first 16 bytes only. Returns 'ok' iff bytes == b"SQLite format 3\\x00", else 'error'.
+    NEVER calls sqlite3.connect() (NFR-001a / NFR-005). NEVER touches the file beyond
     reading the header.
+
+    Renamed from `check_checkpoint_sqlite_header` in the 2026-09-30 amendment; the helper
+    has always worked for any SQLite file — the rename reflects that it's now used by both
+    `memory/checkpoint.sqlite3` AND `memory/store.sqlite3`.
     """
     if not path.exists():
         return "error"
@@ -76,6 +81,14 @@ def check_checkpoint_sqlite_header(path: Path) -> CheckResult:
     if header != SQLITE_HEADER:
         return "error"
     return "ok"
+
+
+def check_checkpoint_sqlite_header(path: Path) -> CheckResult:
+    """Backward-compat alias for `check_sqlite_header` (revised 2026-09-30).
+
+    Used by external callers that pre-date the amendment; delegates to the renamed helper.
+    """
+    return check_sqlite_header(path)
 
 
 def _ensure_parent(path: Path) -> None:
@@ -199,6 +212,28 @@ def _memory_dir_create(path: Path, *, force: bool = False) -> None:
             raise FileExistsError(f"{path} exists but is a regular file")
         os.remove(path)
     path.mkdir(parents=True, exist_ok=False)
+
+
+def _scheduler_dir_create(path: Path, *, force: bool = False) -> None:
+    """scheduler/ creation (NEW 2026-09-30, FR-020).
+
+    Mirrors `_memory_dir_create` for the regular-file-conflict case (clarification Q3):
+    without --force, check() returned 'error' before this point; with --force, the
+    conflicting regular file is removed and the directory is recreated. The directory
+    itself starts empty — the placeholder README is created by a separate item
+    (`_scheduler_readme_create`).
+    """
+    if path.exists() and not path.is_dir():
+        if not force:
+            raise FileExistsError(f"{path} exists but is a regular file")
+        os.remove(path)
+    path.mkdir(parents=True, exist_ok=False)
+
+
+def _scheduler_readme_create(path: Path) -> None:
+    """scheduler/README.md creation (NEW 2026-09-30, FR-020)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(templates.SCHEDULER_README, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +378,7 @@ def _checkpoint_sqlite_check(path: Path) -> ItemStatus:
     name = path.name
     if not path.exists():
         return ItemStatus(path=str(path), name=name, state="error", detail="file missing")
-    result = check_checkpoint_sqlite_header(path)
+    result = check_sqlite_header(path)
     if result == "ok":
         size_mb = path.stat().st_size / (1024 * 1024)
         return ItemStatus(
@@ -361,18 +396,65 @@ def _checkpoint_sqlite_check(path: Path) -> ItemStatus:
 
 
 # ---------------------------------------------------------------------------
-# store.sqlite3  (T024, FR-004)
+# store.sqlite3  (T024, FR-019, NFR-005..NFR-007 — revised 2026-09-30)
 # ---------------------------------------------------------------------------
 
 
+def _store_sqlite_create(path: Path) -> None:
+    """First-time init (FR-019). Provision an empty valid SQLite file.
+
+    Strategy: open sqlite3.connect(path), execute `VACUUM` to force file initialization
+    (writing the 16-byte SQLite header magic + one empty 4 KB page; total ~4 KB on
+    POSIX), then close. This satisfies `path.read_bytes()[:16] == b"SQLite format 3\\x00"`
+    (NFR-005) AND `SELECT count(*) FROM sqlite_master == 0` (NFR-006) AND requires no
+    user-defined schema / pragma value.
+
+    Why VACUUM (vs. just `connect + close`): `sqlite3.connect(path).close()` on a
+    non-existent path leaves a 0-byte file without the SQLite header (the file is
+    only initialized on the first write). `VACUUM` is the standard idiom for
+    forcing a clean, empty SQLite file with no schema — verified at file size
+    ~4096 bytes with the header magic present and 0 rows in sqlite_master.
+
+    NO tables, NO indexes, NO user pragmas — schema is jarvis_scheduler's responsibility
+    (NFR-006). The create path MAY call `sqlite3.connect()` exactly once per
+    first-time-init for this item (NFR-007: single round-trip).
+    """
+    _ensure_parent(path)
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("VACUUM")
+    finally:
+        conn.close()
+
+
 def _store_sqlite_check(path: Path) -> ItemStatus:
-    """Always skipped, stat-only per FR-004 + clarification Q2."""
+    """Byte-level liveness check (FR-019 + NFR-005).
+
+    NEVER calls sqlite3.connect() (NFR-005). Returns:
+    - 'ok' if the file has a valid SQLite header
+    - 'error' if the file is missing or has an invalid header
+
+    Revised 2026-09-30: was stat-only (always `skipped`); now a real
+    liveness check. `is_user_data=True` so `--force` does NOT trigger overwrite
+    even on error (Q6 / FR-003).
+    """
     name = path.name
-    if path.exists():
-        detail = "已存在，未校验"
-    else:
-        detail = "Scheduler 阶段创建"
-    return ItemStatus(path=str(path), name=name, state="skipped", detail=detail)
+    if not path.exists():
+        return ItemStatus(path=str(path), name=name, state="error", detail="file missing")
+    result = check_sqlite_header(path)
+    if result == "ok":
+        return ItemStatus(
+            path=str(path),
+            name=name,
+            state="ok",
+            detail="存活检查通过",
+        )
+    return ItemStatus(
+        path=str(path),
+        name=name,
+        state="error",
+        detail="not a valid SQLite file (header magic mismatch)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -429,12 +511,14 @@ REQUIRED_ITEMS: tuple[str, ...] = (
     "memory/checkpoint.sqlite3",
     "memory/store.sqlite3",
     "memory/README.md",
+    "scheduler",
+    "scheduler/README.md",
     "README.md",
 )
 
 
 def check_required_items(path: Path) -> bool:
-    """Return True iff all 16 items per spec FR-001 exist."""
+    """Return True iff all 18 items per spec FR-001 (revised 2026-09-30) exist."""
     for relpath in REQUIRED_ITEMS:
         if not (path / relpath).exists():
             return False
@@ -452,13 +536,16 @@ def register_all_items(
     timestamp: str,
     abs_path: str,
 ) -> list[ItemSpec]:
-    """Return the 16-item registry in spec FR-001 order.
+    """Return the 18-item registry in spec FR-001 order (revised 2026-09-30; was 16).
 
     Each create_fn is wrapped in functools.partial with item kwargs pre-supplied;
     init_workspace uniformly calls bound_fn(path) (or bound_fn(path, force=True)
     for --force overwrite of error items).
 
-    For store.sqlite3, create_fn is None (never created, per FR-004).
+    Revised 2026-09-30:
+    - `memory/store.sqlite3` create_fn is now `_store_sqlite_create` (was None — file was
+      never created, per pre-amendment FR-004). is_user_data is now True (Q6).
+    - `scheduler/` and `scheduler/README.md` are new items (FR-020 / D-08).
     """
 
     def bind(fn: Callable[..., None], **kwargs: object) -> Callable[..., None]:
@@ -564,15 +651,29 @@ def register_all_items(
         ItemSpec(
             relpath="memory/store.sqlite3",
             kind="FILE",
-            is_user_data=False,
-            create_fn=None,
-            check_fn=_store_sqlite_check,
+            is_user_data=True,  # revised 2026-09-30: was False; Q6
+            create_fn=_store_sqlite_create,  # revised 2026-09-30: was None; FR-019
+            check_fn=_store_sqlite_check,  # revised 2026-09-30: byte-level header
         ),
         ItemSpec(
             relpath="memory/README.md",
             kind="FILE",
             is_user_data=False,
             create_fn=functools.partial(_readme_create, template=templates.MEMORY_README),
+            check_fn=_nonempty_file_check,
+        ),
+        ItemSpec(
+            relpath="scheduler",  # NEW 2026-09-30: FR-020 + D-08
+            kind="DIRECTORY",
+            is_user_data=False,
+            create_fn=functools.partial(_scheduler_dir_create),
+            check_fn=_dir_check,
+        ),
+        ItemSpec(
+            relpath="scheduler/README.md",  # NEW 2026-09-30: FR-020 + D-08
+            kind="FILE",
+            is_user_data=False,
+            create_fn=_scheduler_readme_create,
             check_fn=_nonempty_file_check,
         ),
         ItemSpec(
@@ -588,7 +689,8 @@ def register_all_items(
 __all__ = [
     "ItemSpec",
     "REQUIRED_ITEMS",
-    "check_checkpoint_sqlite_header",
+    "check_checkpoint_sqlite_header",  # backward-compat alias (revised 2026-09-30)
+    "check_sqlite_header",  # renamed 2026-09-30; primary name
     "check_no_python_entries",
     "check_required_items",
     "register_all_items",

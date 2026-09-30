@@ -31,8 +31,9 @@ def test_recreate_only_deleted_init_py(tmp_path: Path) -> None:
     result = init_workspace(path=tmp_path, name="TestAgent", force=False)
     assert result.exit_code == 0
     assert result.counts["created"] == 1
-    assert result.counts["ok"] == 14
-    assert result.counts["skipped"] == 1
+    # 2026-09-30: 17 ok now (was 14; +store.sqlite3 ok, +scheduler/ ok, +scheduler/README.md ok = +3)
+    assert result.counts["ok"] == 17, f"expected 17 ok, got {result.counts}"
+    assert result.counts["skipped"] == 0
 
     snap_after = {
         str(f.relative_to(tmp_path)): _sha256(f)
